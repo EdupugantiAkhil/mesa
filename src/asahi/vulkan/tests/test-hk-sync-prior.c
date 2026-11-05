@@ -1442,30 +1442,28 @@ main(void)
    T("deliberate zero preserved", h.vdm_barrier == 0 && r.prior_vdm == 12);
    /* A staged render's tiling prefixes are rebased like the header's. */
    {
-      uint8_t staged[AGX_DRM_RENDER_SIZE_PRIOR +
-                     sizeof(struct drm_asahi_render_stage_prefixes)]
-         __attribute__((aligned(8))) = {0};
-      struct drm_asahi_cmd_render *sr = (void *)staged;
-      struct drm_asahi_render_stage_prefixes tail = {
-         .ta_cdm_barrier = 5,
-         .ta_vdm_barrier = 2,
+      struct drm_asahi_cmd_render_m5 staged = {
+         .legacy.flags = DRM_ASAHI_RENDER_STAGE_PREFIXES,
+         .stage_prefixes.ta_cdm_barrier = 5,
+         .stage_prefixes.ta_vdm_barrier = 2,
       };
-      sr->flags = DRM_ASAHI_RENDER_STAGE_PREFIXES;
-      memcpy(staged + AGX_DRM_RENDER_SIZE_PRIOR, &tail, sizeof(tail));
       h = (struct drm_asahi_cmd_header){.cmd_type = DRM_ASAHI_CMD_RENDER,
-                                        .size = sizeof(staged),
+                                        .size = AGX_DRM_RENDER_SIZE_FULL,
                                         .vdm_barrier = 2,
                                         .cdm_barrier = 5};
-      T("staged rebase", hk_drm_rebase_prior(&h, staged, 3, 4, base, true));
-      memcpy(&tail, staged + AGX_DRM_RENDER_SIZE_PRIOR, sizeof(tail));
+      T("staged rebase", hk_drm_rebase_prior(&h, &staged, 3, 4, base, true));
       T("staged tiling render prefix exact global12",
-        tail.ta_vdm_barrier == DRM_ASAHI_BARRIER_NONE &&
-           tail.ta_prior_vdm == 12);
+        staged.stage_prefixes.ta_vdm_barrier == DRM_ASAHI_BARRIER_NONE &&
+           staged.stage_prefixes.ta_prior_vdm == 12);
       T("staged tiling compute prefix relative1",
-        tail.ta_cdm_barrier == 1 && tail.ta_prior_cdm == 0);
-      h.size = AGX_DRM_RENDER_SIZE_FULL;
-      T("staged size mismatch rejected",
-        !hk_drm_rebase_prior(&h, staged, 3, 4, base, true));
+        staged.stage_prefixes.ta_cdm_barrier == 1 &&
+           staged.stage_prefixes.ta_prior_cdm == 0);
+      T("staged ray-query state untouched",
+        staged.legacy.ray_query[0].scs_layout == 0 &&
+           staged.legacy.ray_query[1].intersection_pool == 0);
+      h.size = AGX_DRM_RENDER_SIZE_PRIOR + 32;
+      T("staged command shorter than the full command rejected",
+        !hk_drm_rebase_prior(&h, &staged, 3, 4, base, true));
    }
    struct drm_asahi_cmd_compute co = {0};
    h = (struct drm_asahi_cmd_header){.cmd_type = DRM_ASAHI_CMD_COMPUTE,
