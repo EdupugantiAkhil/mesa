@@ -10,8 +10,8 @@
  * indirect forms let one GPU invocation fill in the launch size, because that
  * is the only part that is not known until the command executes.
  *
- * Elsewhere a pipeline is one megakernel; on M5 it has one kernel per
- * ray-generation group.  Which group a trace runs
+ * Elsewhere a pipeline is one megakernel; on G17P (including G16S/T6040) and
+ * M5 it has one kernel per ray-generation group. Which group a trace runs
  * is named by the raygen shader binding table record, and that record is
  * application memory whose contents are only required to be valid when the
  * command executes -- not when it is recorded.  So for a pipeline with several
@@ -84,7 +84,7 @@ hk_bound_rt_pipeline(struct hk_cmd_buffer *cmd)
 }
 
 /* The one kernel a trace dispatches without a GPU-side selection: the
- * megakernel, or the only per-raygen kernel of an M5 pipeline. */
+ * megakernel, or the only per-raygen kernel of a specialized pipeline. */
 static struct hk_api_shader *
 hk_rt_single_kernel(const struct hk_ray_tracing_pipeline *pipeline)
 {

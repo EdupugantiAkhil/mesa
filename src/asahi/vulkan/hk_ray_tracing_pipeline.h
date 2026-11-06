@@ -57,17 +57,18 @@ struct hk_ray_tracing_pipeline {
    struct hk_rt_stage_nir **stages;
    struct hk_ray_tracing_group *groups;
 
-   /* The compiled megakernel.  NULL on M5, which compiles kernels instead,
+   /* The compiled megakernel. NULL on generations using per-raygen kernels,
     * and for a pipeline library, which is never executable. */
    struct hk_api_shader *shader;
 
    /*
-    * On M5, one compute kernel per ray-generation group.  Each kernel inlines only
-    * its own raygen plus every hit/miss/intersection/callable stage reachable
-    * through the shader binding table; vkCmdTraceRays selects the kernel on the
-    * GPU from the raygen record's group handle (hk_cmd_trace_rays.c), because
-    * the record's contents are only required to be valid at execution time.
-    * Empty elsewhere and for a pipeline library, which is never executable.
+    * On G17P (including G16S/T6040) and M5, one compute kernel per
+    * ray-generation group. Each kernel inlines only its own raygen plus every
+    * hit/miss/intersection/callable stage reachable through the shader binding
+    * table; vkCmdTraceRays selects the kernel on the GPU from the raygen
+    * record's group handle (hk_cmd_trace_rays.c), because the record's
+    * contents are only required to be valid at execution time. Empty
+    * elsewhere and for a pipeline library, which is never executable.
     */
    uint32_t kernel_count;
    struct hk_rt_kernel {

@@ -13,6 +13,21 @@
 static unsigned stats_calls, ir_calls;
 
 static VkResult
+get_props(struct vk_device *dev, const struct vk_shader *shader,
+          uint32_t *count, VkPipelineExecutablePropertiesKHR *props)
+{
+   const uint32_t capacity = props ? *count : 0;
+   *count = props ? MIN2(capacity, 1) : 1;
+   if (props && capacity) {
+      props[0].stages = VK_SHADER_STAGE_COMPUTE_BIT;
+      props[0].subgroupSize = 32;
+      VK_COPY_STR(props[0].name, "test compute shader");
+      VK_COPY_STR(props[0].description, "test compute shader");
+   }
+   return props && capacity == 0 ? VK_INCOMPLETE : VK_SUCCESS;
+}
+
+static VkResult
 get_stats(struct vk_device *dev, const struct vk_shader *shader,
           uint32_t index, uint32_t *count,
           VkPipelineExecutableStatisticKHR *stats)
@@ -46,6 +61,7 @@ static bool
 check_pipeline(void)
 {
    const struct vk_shader_ops shader_ops = {
+      .get_executable_properties = get_props,
       .get_executable_statistics = get_stats,
       .get_executable_internal_representations = get_irs,
    };
@@ -122,6 +138,36 @@ check_pipeline(void)
    CHECK(ops->get_executable_properties(NULL, &pipeline.base, &count, &props) ==
          VK_SUCCESS);
    CHECK(count == 0);
+
+   /* G17P/G16S and M5 expose one executable per raygen kernel. */
+   struct hk_api_shader kernels[2] = {
+      {.vk.ops = &shader_ops},
+      {.vk.ops = &shader_ops},
+   };
+   struct hk_rt_kernel rt_kernels[2] = {
+      {.shader = &kernels[0], .raygen_handle_index = 17},
+      {.shader = &kernels[1], .raygen_handle_index = 29},
+   };
+   pipeline.kernels = rt_kernels;
+   pipeline.kernel_count = 2;
+   count = 0;
+   CHECK(ops->get_executable_properties(NULL, &pipeline.base, &count, NULL) ==
+         VK_SUCCESS);
+   CHECK(count == 2);
+   VkPipelineExecutablePropertiesKHR kernel_props[2] = {
+      {.sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR},
+      {.sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR},
+   };
+   count = 2;
+   CHECK(ops->get_executable_properties(NULL, &pipeline.base, &count,
+                                        kernel_props) == VK_SUCCESS);
+   CHECK(count == 2);
+   CHECK(strstr(kernel_props[0].name, "17"));
+   CHECK(strstr(kernel_props[1].name, "29"));
+   count = 0;
+   CHECK(ops->get_executable_statistics(NULL, &pipeline.base, 1, &count,
+                                        NULL) == VK_SUCCESS);
+   CHECK(count == 1);
    return true;
 }
 

@@ -13,8 +13,9 @@
  * (hk_nir_ray_tracing.c) is already a port of lavapipe's, so the two halves fit
  * without reinterpretation.
  *
- * On M5, two departures from lavapipe's single megakernel, both for
- * throughput:
+ * On G17P and M5, two departures from lavapipe's single megakernel, both for
+ * throughput. G16S/T6040 uses the G17P architecture profile, so it takes the
+ * same path without a product-specific fork:
  *
  *  - One kernel is compiled PER RAY-GENERATION GROUP rather than one for the
  *    whole pipeline.  A trace runs exactly one raygen, so inlining every raygen
@@ -328,10 +329,10 @@ struct hk_rt_compiler {
    bool position_fetch;
    bool native_agx;
    bool native_m5;
-   /* M5 compiles one kernel per ray-generation group and shares a stage's
-    * call site between the groups naming it. Other chips keep the single
-    * megakernel with one call site per group. */
-   bool m5;
+   /* Selected generations compile one kernel per ray-generation group and
+    * share a stage's call site between the groups naming it. Other chips keep
+    * the single megakernel with one call site per group. */
+   bool specialize;
    bool callable_dispatch;
 
    struct hk_rt_shader_state state;
@@ -597,7 +598,7 @@ hk_rt_collect_stage_calls(nir_builder *b, struct hk_rt_compiler *compiler,
       if (which == HK_RT_GROUP_ISEC && group->ahit_index != VK_SHADER_UNUSED_KHR)
          ahit = compiler->pipeline->stages[group->ahit_index]->nir;
 
-      if (!compiler->m5) {
+      if (!compiler->specialize) {
          calls[count++] = (struct hk_rt_stage_call){
             .stage = stage, .ahit = ahit, .handle = handle,
             .handle_index = group->handle.index,
@@ -2554,10 +2555,10 @@ hk_ray_tracing_pipeline_get_shader(struct vk_pipeline *vk_pipeline,
    return NULL;
 }
 
-/* All RT stages are inlined into a single compute megakernel, except on M5,
- * which compiles one kernel per ray-generation group. Report each executable
- * with the API stages it implements rather than COMPUTE. A library only
- * retains stage NIR and has no executable to enumerate.
+/* All RT stages are inlined into a compute megakernel. Specialized
+ * generations compile one kernel per ray-generation group. Report each
+ * executable with the API stages it implements rather than COMPUTE. A library
+ * only retains stage NIR and has no executable to enumerate.
  */
 static VkResult
 hk_rt_pipeline_get_executable_properties(
@@ -3086,7 +3087,7 @@ hk_compile_rt_kernel(
       .position_fetch = dev->vk.enabled_features.rayTracingPositionFetch,
       .native_agx = dev->gen1_native_rq && dev->gen1_rq_instances,
       .native_m5 = dev->m5_native_rq && dev->m5_rq_instances,
-      .m5 = agx_chip_g17_m5(dev->dev.chip),
+      .specialize = agx_chip_rt_per_raygen_kernels(dev->dev.chip),
       .callable_dispatch = hk_callable_dispatch_needed(pipeline),
       .max_depth = create_info->maxPipelineRayRecursionDepth,
    };
@@ -3305,8 +3306,9 @@ hk_compile_rt_kernel(
 }
 
 /*
- * On M5, one kernel per ray-generation group.  A pipeline whose groups name no
- * raygen (only a library can be created that way) has nothing to compile;
+ * On generations selected by agx_chip_rt_per_raygen_kernels(), one kernel per
+ * ray-generation group. A pipeline whose groups name no raygen (only a
+ * library can be created that way) has nothing to compile;
  * hk_cmd_trace_rays.c refuses to trace with it.
  */
 static VkResult
@@ -3315,9 +3317,7 @@ hk_compile_ray_tracing_pipeline(
    const VkRayTracingPipelineCreateInfoKHR *create_info,
    const VkAllocationCallbacks *pAllocator)
 {
-   /* Only M5 compiles one kernel per ray-generation group; elsewhere the
-    * pipeline is one megakernel. */
-   if (!agx_chip_g17_m5(dev->dev.chip)) {
+   if (!agx_chip_rt_per_raygen_kernels(dev->dev.chip)) {
       struct hk_rt_kernel kernel = {0};
       VkResult result = hk_compile_rt_kernel(dev, pipeline, create_info,
                                              pAllocator, NULL, &kernel);
@@ -3365,8 +3365,8 @@ hk_compile_ray_tracing_pipeline(
 }
 
 /* The common binary entrypoints own vk_rt_pipeline objects.  Honeykrisp's
- * megakernel (or, on M5, per-raygen kernels) and retained library NIR have a
- * different layout and lifetime. */
+ * megakernel (or specialized per-raygen kernels) and retained library NIR
+ * have a different layout and lifetime. */
 #define HK_RT_BINARY_MAGIC   0x42524b48u
 #define HK_RT_BINARY_VERSION 1u
 
@@ -3374,7 +3374,7 @@ hk_compile_ray_tracing_pipeline(
 enum hk_rt_binary_executable {
    HK_RT_BINARY_LIBRARY = 0,
    HK_RT_BINARY_MEGAKERNEL = 1,
-   HK_RT_BINARY_RAYGEN_KERNELS = 2, /* M5 */
+   HK_RT_BINARY_RAYGEN_KERNELS = 2,
 };
 
 static bool
@@ -3609,7 +3609,7 @@ hk_rt_binary_deserialize(struct hk_device *dev,
    uint32_t groups = blob_read_uint32(&blob);
    pipeline->base.stages = blob_read_uint32(&blob);
    const uint32_t executable = blob_read_uint32(&blob);
-   const uint32_t kernels_kind = agx_chip_g17_m5(dev->dev.chip)
+   const uint32_t kernels_kind = agx_chip_rt_per_raygen_kernels(dev->dev.chip)
                                     ? HK_RT_BINARY_RAYGEN_KERNELS
                                     : HK_RT_BINARY_MEGAKERNEL;
    if (blob.overrun ||

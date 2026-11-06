@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: MIT
  */
 
-/* CPU control of the production RT creation entry point.  Translation and
- * megakernel construction are real; only GPU shader compilation/upload is
- * replaced.  These checks do not execute shaders or establish conformance.
+/* CPU control of the production RT creation entry point. Translation and RT
+ * kernel construction are real; only GPU shader compilation/upload is
+ * replaced. These checks do not execute shaders or establish conformance.
  */
 #include "spirv/spirv.h"
 #include "util/blob.h"
@@ -261,6 +261,15 @@ fixture_serialize(struct vk_device *device, const struct vk_shader *shader,
 }
 static const struct vk_shader_ops fixture_shader_ops = {.serialize =
                                                            fixture_serialize};
+
+static void
+set_fixture_shader_ops(struct hk_ray_tracing_pipeline *pipeline)
+{
+   if (pipeline->shader)
+      pipeline->shader->vk.ops = &fixture_shader_ops;
+   for (uint32_t i = 0; i < pipeline->kernel_count; ++i)
+      pipeline->kernels[i].shader->vk.ops = &fixture_shader_ops;
+}
 static VkResult
 fixture_deserialize(struct vk_device *device, struct blob_reader *blob,
                     uint32_t version, const VkAllocationCallbacks *alloc,
@@ -441,14 +450,16 @@ main(void)
          if (st == 4)
             group.intersectionShader = 0;
       }
-      for (unsigned library = 0; library < 2; ++library) {
+      /* An executable needs a raygen group. Every stage shape is still
+       * covered as retained library NIR; the raygen row covers executable
+       * per-raygen-kernel transport. */
+      for (unsigned library = st == 0 ? 0 : 1; library < 2; ++library) {
          VkRayTracingPipelineCreateInfoKHR ci = info(library ? LIB : 0);
          VkPipeline pipeline;
          CHECK(create(VK_NULL_HANDLE, &ci, &pipeline) == VK_SUCCESS);
          struct hk_ray_tracing_pipeline *p =
             hk_ray_tracing_pipeline_from_handle(pipeline);
-         if (p->shader)
-            p->shader->vk.ops = &fixture_shader_ops;
+         set_fixture_shader_ops(p);
          VkPipelineBinaryKeyKHR key = {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_BINARY_KEY_KHR};
          VkPipelineCreateInfoKHR wrapper = {
@@ -497,7 +508,9 @@ main(void)
             hk_ray_tracing_pipeline_from_handle(roundtrip);
          CHECK(r->stage_count == p->stage_count &&
                r->group_count == p->group_count);
-         CHECK(!!r->shader == !library && r->base.stages == p->base.stages);
+         CHECK(r->shader == NULL && r->base.stages == p->base.stages);
+         CHECK(r->kernel_count == (library ? 0 : 1));
+         CHECK(r->kernel_count == p->kernel_count);
          CHECK(!memcmp(r->groups, p->groups,
                        p->group_count * sizeof(p->groups[0])));
          CHECK(r->stages[0]->nir->info.stage ==
@@ -532,7 +545,7 @@ main(void)
          vk_common_DestroyPipelineBinaryKHR(device, binaries[library], &alloc);
       }
    }
-   CHECK(serialized == 6 && restored == 6);
+   CHECK(serialized == 1 && restored == 1);
    CHECK(live_nir == 0 && layout->ref_cnt == 1);
    vk_common_DestroyShaderModule(device, module, NULL);
    vk_pipeline_layout_unref(&dev.vk, layout);

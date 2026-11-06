@@ -745,6 +745,15 @@ agx_chip_g17_m5(enum agx_chip chip)
           chip == AGX_CHIP_G17C;
 }
 
+/* RT pipeline compiler shape. G16S/T6040 is classified as G17P after its
+ * HAL200/AGX3b contract is validated, so product variants do not belong here.
+ */
+static inline bool
+agx_chip_rt_per_raygen_kernels(enum agx_chip chip)
+{
+   return chip == AGX_CHIP_G17P || agx_chip_g17_m5(chip);
+}
+
 /* Stable name for diagnostics, e.g. "G15X". Never NULL. */
 const char *agx_chip_name(enum agx_chip chip);
 

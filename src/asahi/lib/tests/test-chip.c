@@ -57,6 +57,7 @@ struct chip_case {
    enum agx_isa_encoding encoding;
    const char *name;
    bool ray_tracing;
+   bool rt_per_raygen;
    bool scheduling_stalls;
 };
 
@@ -67,48 +68,48 @@ struct chip_case {
  */
 static const struct chip_case chip_cases[] = {
    {13, 'G', 1, AGX_CHIP_G13G, AGX_ISA_AGX2, AGX_ISA_ENCODING_AGX2,
-    "G13G", false, false},
+    "G13G", false, false, false},
    {13, 'S', 2, AGX_CHIP_G13X, AGX_ISA_AGX2, AGX_ISA_ENCODING_AGX2,
-    "G13X", false, false},
+    "G13X", false, false, false},
    {14, 'G', 1, AGX_CHIP_G14G, AGX_ISA_AGX2, AGX_ISA_ENCODING_AGX2,
-    "G14G", false, false},
+    "G14G", false, false, false},
    {14, 'C', 4, AGX_CHIP_G14X, AGX_ISA_AGX2, AGX_ISA_ENCODING_AGX2,
-    "G14X", false, false},
+    "G14X", false, false, false},
 
    {15, 'P', 1, AGX_CHIP_G15P, AGX_ISA_AGX2, AGX_ISA_ENCODING_AGX2,
-    "G15P", false, false},
+    "G15P", false, false, false},
    {15, 'G', 1, AGX_CHIP_G15G, AGX_ISA_AGX3, AGX_ISA_ENCODING_AGX3B,
-    "G15G", true, true},
+    "G15G", true, false, true},
    {15, 'S', 2, AGX_CHIP_G15S, AGX_ISA_AGX3, AGX_ISA_ENCODING_AGX3B,
-    "G15S", true, false},
+    "G15S", true, false, false},
    {15, 'C', 4, AGX_CHIP_G15C, AGX_ISA_AGX3, AGX_ISA_ENCODING_AGX3B,
-    "G15C", true, false},
+    "G15C", true, false, false},
    {15, 'D', 8, AGX_CHIP_G15D, AGX_ISA_AGX3, AGX_ISA_ENCODING_AGX3B,
-    "G15D", true, false},
+    "G15D", true, false, false},
 
    {16, 'P', 1, AGX_CHIP_G16P, AGX_ISA_AGX3, AGX_ISA_ENCODING_AGX3B,
-    "G16P", true, false},
+    "G16P", true, false, false},
    {16, 'G', 1, AGX_CHIP_G16G, AGX_ISA_AGX3, AGX_ISA_ENCODING_AGX3B,
-    "G16G", true, false},
+    "G16G", true, false, false},
    {16, 'S', 2, AGX_CHIP_G16S, AGX_ISA_AGX3, AGX_ISA_ENCODING_AGX3B,
-    "G16S", true, false},
+    "G16S", true, false, false},
    {16, 'C', 4, AGX_CHIP_G16C, AGX_ISA_AGX3, AGX_ISA_ENCODING_AGX3B,
-    "G16C", true, false},
+    "G16C", true, false, false},
 
    {17, 'P', 1, AGX_CHIP_G17P, AGX_ISA_AGX3, AGX_ISA_ENCODING_AGX3B,
-    "G17P", true, false},
+    "G17P", true, true, false},
    {17, 'A', 1, AGX_CHIP_G17A, AGX_ISA_AGX3, AGX_ISA_ENCODING_AGX3B,
-    "G17A", true, false},
+    "G17A", true, false, false},
    {17, 'G', 1, AGX_CHIP_G17G, AGX_ISA_AGX3, AGX_ISA_ENCODING_AGX3C,
-    "G17G", true, false},
+    "G17G", true, true, false},
    {17, 'S', 2, AGX_CHIP_G17S, AGX_ISA_AGX3, AGX_ISA_ENCODING_AGX3C,
-    "G17S", true, false},
+    "G17S", true, true, false},
    {17, 'C', 4, AGX_CHIP_G17C, AGX_ISA_AGX3, AGX_ISA_ENCODING_AGX3C,
-    "G17C", true, false},
+    "G17C", true, true, false},
 
    /* M6 (J873): the third AGX3 encoding. */
    {18, 'G', 1, AGX_CHIP_G18G, AGX_ISA_AGX3, AGX_ISA_ENCODING_AGX3D,
-    "G18G", true, false},
+    "G18G", true, false, false},
 };
 
 static enum agx_chip
@@ -134,6 +135,7 @@ test_recovered_table(void)
       CHECK_EQ(agx_chip_isa_encoding(c->chip), c->encoding);
       CHECK(strcmp(agx_chip_name(c->chip), c->name) == 0);
       CHECK(agx_chip_has_hardware_ray_tracing(c->chip) == c->ray_tracing);
+      CHECK(agx_chip_rt_per_raygen_kernels(c->chip) == c->rt_per_raygen);
       CHECK(agx_chip_needs_scheduling_stalls(c->chip) ==
             c->scheduling_stalls);
       /* Every named chip has a known encoding. Every encoding but AGX3d has
@@ -170,6 +172,19 @@ test_variant_is_load_bearing(void)
    CHECK_EQ(chip_for(18, 'G', 4), AGX_CHIP_G18G);
    CHECK_EQ(agx_chip_isa_encoding(AGX_CHIP_G18G),
             AGX_ISA_ENCODING_AGX3D);
+
+   /* T6040/G16S uses the qualified G17P architecture profile, including the
+    * RT pipeline specialization. Raw, unqualified G16S remains outside it. */
+   struct drm_asahi_params_global t6040 = {
+      .gpu_generation = 16,
+      .gpu_variant = 'S',
+      .chip_id = 0x6040,
+      .num_clusters_total = 2,
+      .usc_generation = AGX_ISA_AGX3,
+      .gpu_hal_generation = DRM_ASAHI_GPU_HAL_200,
+   };
+   CHECK_EQ(agx_chip_from_params(&t6040), AGX_CHIP_G17P);
+   CHECK(agx_chip_rt_per_raygen_kernels(agx_chip_from_params(&t6040)));
 }
 
 static void
