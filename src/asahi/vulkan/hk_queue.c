@@ -1126,11 +1126,32 @@ hk_sparse_image_bind_memory(struct hk_device *device,
    return hk_bind_builder_finish(&b);
 }
 
-static VkResult
+VkResult
 hk_queue_submit_bind_sparse_memory(struct hk_device *device,
                                    struct vk_queue_submit *submission)
 {
    assert(submission->command_buffer_count == 0);
+
+   /* VM_BIND and residency metadata updates execute on the CPU. The common
+    * queue runtime only waits for input fences to be submitted; passing those
+    * fences to a later GPU submit cannot order these host updates. Wait for
+    * completion before changing any mapping. Bound each wait so device loss
+    * can cancel it even when a semaphore will never become signalled.
+    */
+   while (true) {
+      VkResult result = vk_device_check_status(&device->vk);
+      if (result != VK_SUCCESS)
+         return result;
+
+      result = vk_sync_wait_many(&device->vk, submission->wait_count,
+                                 submission->waits, VK_SYNC_WAIT_COMPLETE,
+                                 os_time_get_absolute_timeout(100000000));
+      if (result == VK_TIMEOUT)
+         continue;
+      if (result != VK_SUCCESS)
+         return result;
+      break;
+   }
 
    for (uint32_t i = 0; i < submission->buffer_bind_count; ++i) {
       VkResult result =
