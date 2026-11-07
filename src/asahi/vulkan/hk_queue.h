@@ -61,3 +61,5 @@ void hk_device_quiesce_lost_submissions(struct hk_device *dev);
 
 VkResult hk_queue_submit_bind_sparse_memory(struct hk_device *device,
                                             struct vk_queue_submit *submission);
+
+void hk_queue_share(struct hk_device *dev, struct hk_queue *queue);

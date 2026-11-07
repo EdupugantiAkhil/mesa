@@ -983,3 +983,12 @@ if with_tests
     dependencies : [hk_deps], link_with : [libhk]),
     timeout : 30, suite : ['asahi'])
 endif
+
+if with_tests
+  test('hk_queue_sharing', executable('hk_queue_sharing_test',
+    files('tests/test-hk-queue-sharing.c'),
+    include_directories : [include_directories('.'), inc_gallium, inc_gallium_aux,
+      inc_include, inc_src, inc_asahi, inc_virtio_gpu, inc_virtio_vdrm],
+    dependencies : [hk_deps], link_with : [libhk]),
+    timeout : 30, suite : ['asahi'])
+endif

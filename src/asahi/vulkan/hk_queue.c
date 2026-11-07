@@ -1232,6 +1232,9 @@ hk_queue_ensure_drm(struct hk_device *dev, struct hk_queue *queue)
 static VkResult
 hk_queue_admit(struct hk_queue *queue)
 {
+   /* Admission and callbacks must use the same backing queue and lock. */
+   if (queue->vk.real_queue)
+      queue = container_of(queue->vk.real_queue, struct hk_queue, vk);
    simple_mtx_lock(&queue->vk.lock);
    VkResult result = hk_queue_ensure_drm(hk_queue_device(queue), queue);
    /* Only allocation errors are retryable here. Keep the existing lost-device
@@ -1996,6 +1999,32 @@ translate_priority(VkQueueGlobalPriorityKHR prio)
    }
 }
 
+void
+hk_queue_share(struct hk_device *dev, struct hk_queue *queue)
+{
+   /* Keep independent Vulkan submit workers while bounding scarce kernel
+    * contexts per device. Queue families differ in exposed capabilities, but
+    * each kernel queue supports both engines. Priority and creation flags
+    * must match; the common runtime serializes callbacks on the backing queue.
+    */
+   if (!agx_chip_g17_m5(dev->dev.chip))
+      return;
+
+   vk_foreach_queue(iter, &dev->vk) {
+      if (iter == &queue->vk)
+         break;
+      if (vk_queue_is_emulated(iter))
+         continue;
+      struct hk_queue *real = container_of(iter, struct hk_queue, vk);
+      if (real->drm.virt_ring_idx != queue->drm.virt_ring_idx ||
+          real->vk.flags != queue->vk.flags)
+         continue;
+      queue->vk.driver_submit = NULL;
+      vk_queue_set_emulated(&queue->vk, iter);
+      break;
+   }
+}
+
 VkResult
 hk_queue_init(struct hk_device *dev, const VkDeviceQueueCreateInfo *pCreateInfo,
               uint32_t index_in_family)
@@ -2107,12 +2136,15 @@ hk_queue_init(struct hk_device *dev, const VkDeviceQueueCreateInfo *pCreateInfo,
       }
    }
 
+   hk_queue_share(dev, queue);
+
    /* Permission for an elevated class must be checked during device
     * creation, while the application can still fall back to MEDIUM. Delaying
     * it until submission would consume payloads or turn refusal into device
     * loss. Ordinary queues remain lazy to avoid reserving unused contexts.
     */
-   if (drm_priority == DRM_ASAHI_PRIORITY_HIGH) {
+   if (!vk_queue_is_emulated(&queue->vk) &&
+       drm_priority == DRM_ASAHI_PRIORITY_HIGH) {
       result = hk_queue_ensure_drm(dev, queue);
       if (result != VK_SUCCESS) {
          hk_queue_finish(dev, queue);

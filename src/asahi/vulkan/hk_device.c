@@ -1112,7 +1112,11 @@ fail_accel_struct:
 fail_mem_cache:
    vk_pipeline_cache_destroy(dev->vk.mem_cache, NULL);
 fail_queues:
-   vk_foreach_queue_safe(iter, &dev->vk) {
+   /* Aliases were created after their backing queues. Finish
+    * them first so a submit worker cannot refer to a freed backing queue. */
+   while (!list_is_empty(&dev->vk.queues)) {
+      struct vk_queue *iter =
+         list_last_entry(&dev->vk.queues, struct vk_queue, link);
       struct hk_queue *queue = container_of(iter, struct hk_queue, vk);
       hk_queue_finish(dev, queue);
    }
@@ -1180,7 +1184,11 @@ hk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
    /* Retire pending profiler records while the queue syncobjs exist. */
    hk_frame_anatomy_finish(dev);
 
-   vk_foreach_queue_safe(iter, &dev->vk) {
+   /* Aliases were created after their backing queues. Finish
+    * them first so a submit worker cannot refer to a freed backing queue. */
+   while (!list_is_empty(&dev->vk.queues)) {
+      struct vk_queue *iter =
+         list_last_entry(&dev->vk.queues, struct vk_queue, link);
       struct hk_queue *queue = container_of(iter, struct hk_queue, vk);
       hk_queue_finish(dev, queue);
    }
