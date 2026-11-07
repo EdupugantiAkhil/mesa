@@ -14941,6 +14941,31 @@ TEST_F(AGX3PackBinary, StorageImageBankAndSlotMatchNative)
    EXPECT_EQ(memcmp(bytes, second, sizeof(second)), 0);
 }
 
+/* Array layers remain constant across mip levels, unlike 3D depth. The
+ * backend must preserve that distinction for both descriptor consumers. */
+TEST_F(AGX3PackBinary, ArrayAnd3DStorageImageWritesRemainDistinct)
+{
+   for (const auto enc : {AGX_ISA_ENCODING_AGX3B, AGX_ISA_ENCODING_AGX3C}) {
+      std::vector<uint8_t> code[2];
+      for (unsigned i = 0; i < 2; ++i) {
+         agx_builder *b = builder(enc);
+         b->shader->stage = MESA_SHADER_COMPUTE;
+         agx_index data = agx_register(8, AGX_SIZE_32);
+         data.channels_m1 = 3;
+         agx_index coords = agx_register(0, AGX_SIZE_32);
+         coords.channels_m1 = 2;
+         agx_image_write(b, data, coords, agx_immediate(0),
+                         agx_uniform(20, AGX_SIZE_64),
+                         agx_register(6, AGX_SIZE_32),
+                         i ? AGX_DIM_3D : AGX_DIM_2D_ARRAY, false);
+         agx_stop(b);
+         code[i] = pack(b);
+         ASSERT_FALSE(code[i].empty());
+      }
+      EXPECT_NE(code[0], code[1]);
+   }
+}
+
 TEST_F(AGX3PackBinary, InFlightStorageImageWritesUseDisjointBanks)
 {
    const auto enc = AGX_ISA_ENCODING_AGX3B;

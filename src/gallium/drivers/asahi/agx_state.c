@@ -1948,8 +1948,10 @@ agx_batch_upload_pbe_internal(struct agx_batch *batch,
    {
       cfg.dimension =
          agx_translate_tex_dim(target, util_res_sample_count(&tex->base));
-      /* G17G shaders store to layered images as 3D (agx3_pack_binary.c). */
+      /* M5 stores retain array descriptors. Keep the legacy conversion for
+       * other Gen10 backends. */
       if (descriptor_generation == AGX_DESCRIPTOR_GENERATION_10 &&
+          agx_chip_isa_encoding(dev->chip) != AGX_ISA_ENCODING_AGX3C &&
           !block_access && cfg.dimension == AGX_TEXTURE_DIMENSION_2D_ARRAY)
          cfg.dimension = AGX_TEXTURE_DIMENSION_3D;
       cfg.layout = agx_translate_layout(tex->layout.tiling);
