@@ -2402,7 +2402,6 @@ static const VkQueueGlobalPriorityKHR hk_global_queue_priorities[] = {
    VK_QUEUE_GLOBAL_PRIORITY_LOW_KHR,
    VK_QUEUE_GLOBAL_PRIORITY_MEDIUM_KHR,
    VK_QUEUE_GLOBAL_PRIORITY_HIGH_KHR,
-   VK_QUEUE_GLOBAL_PRIORITY_REALTIME_KHR,
 };
 
 VKAPI_ATTR void VKAPI_CALL
@@ -2430,9 +2429,11 @@ hk_GetPhysicalDeviceQueueFamilyProperties2(
          if (prio) {
             STATIC_ASSERT(ARRAY_SIZE(hk_global_queue_priorities) <=
                           VK_MAX_GLOBAL_PRIORITY_SIZE_KHR);
-            prio->priorityCount = ARRAY_SIZE(hk_global_queue_priorities);
+            /* The native kernel reserves REALTIME and only accepts HIGH on
+             * M5. Report the same classes that queue creation can admit. */
+            prio->priorityCount = agx_chip_g17_m5(pdev->dev.chip) ? 3 : 2;
             memcpy(&prio->priorities, hk_global_queue_priorities,
-                   sizeof(hk_global_queue_priorities));
+                   prio->priorityCount * sizeof(hk_global_queue_priorities[0]));
          }
       }
    }

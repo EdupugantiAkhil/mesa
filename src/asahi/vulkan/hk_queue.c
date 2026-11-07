@@ -2024,6 +2024,11 @@ hk_queue_init(struct hk_device *dev, const VkDeviceQueueCreateInfo *pCreateInfo,
     * qualification.
     */
    enum drm_asahi_priority drm_priority = translate_priority(priority);
+   if (drm_priority == DRM_ASAHI_PRIORITY_REALTIME) {
+      vk_free(&dev->vk.alloc, queue);
+      return VK_ERROR_NOT_PERMITTED_EXT;
+   }
+
    if (agx_chip_g17_m5(dev->dev.chip)) {
       if (!priority_info &&
           pCreateInfo->pQueuePriorities[index_in_family] < 0.5f)
@@ -2099,6 +2104,19 @@ hk_queue_init(struct hk_device *dev, const VkDeviceQueueCreateInfo *pCreateInfo,
              stream + AGX3_CDM_SSTT_FLUSH_INVALIDATE_SIZE)) {
          hk_queue_finish(dev, queue);
          return vk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+      }
+   }
+
+   /* Permission for an elevated class must be checked during device
+    * creation, while the application can still fall back to MEDIUM. Delaying
+    * it until submission would consume payloads or turn refusal into device
+    * loss. Ordinary queues remain lazy to avoid reserving unused contexts.
+    */
+   if (drm_priority == DRM_ASAHI_PRIORITY_HIGH) {
+      result = hk_queue_ensure_drm(dev, queue);
+      if (result != VK_SUCCESS) {
+         hk_queue_finish(dev, queue);
+         return result;
       }
    }
 
