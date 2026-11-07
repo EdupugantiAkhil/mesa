@@ -24,6 +24,7 @@
 #include "hk_cmd_buffer.h"
 #include "hk_frame_anatomy.h"
 #include "hk_device.h"
+#include "hk_entrypoints.h"
 #include "hk_drm_render_core.h"
 #include "hk_drm_prior_core.h"
 #include "hk_execution_allowance.h"
@@ -50,6 +51,7 @@
 
 #include "hk_private.h"
 #include "layout.h"
+#include "vk_common_entrypoints.h"
 #include "vk_drm_syncobj.h"
 #include "vk_sync.h"
 
@@ -1180,9 +1182,9 @@ hk_queue_ensure_drm(struct hk_device *dev, struct hk_queue *queue)
    if (queue->drm.id != UINT32_MAX)
       return VK_SUCCESS;
 
-   /* The common queue submit path serializes submissions to this queue.
-    * A logical queue, including one used only for host synchronization, does
-    * not need a kernel scheduling context until it actually submits work. */
+   /* M5 admits GPU work at the API entrypoint, before semaphore payloads
+    * move. Other devices retain admission in the serialized driver callback.
+    * Host-only synchronization does not need a kernel scheduling context. */
    const uint64_t layouts[2] = {
       dev->gen1_native_graphics_rq ? hk_gen1_ray_query_scs_layout(dev) : 0,
       dev->gen1_native_fragment_rq ? hk_gen1_ray_query_scs_layout(dev) : 0};
@@ -1199,6 +1201,88 @@ hk_queue_ensure_drm(struct hk_device *dev, struct hk_queue *queue)
       VK_ERROR_INITIALIZATION_FAILED;
    return vk_errorf(dev, result, "DRM_IOCTL_ASAHI_QUEUE_CREATE failed: %s",
                     strerror(error));
+}
+
+/* Admission must precede the common runtime's semaphore payload moves and
+ * the first submission of a batch. Failing inside driver_submit is too late
+ * to return a retryable allocation error. Keep admission lazy so unused Vulkan
+ * queues do not consume the device-wide pool of kernel contexts.
+ */
+static VkResult
+hk_queue_admit(struct hk_queue *queue)
+{
+   simple_mtx_lock(&queue->vk.lock);
+   VkResult result = hk_queue_ensure_drm(hk_queue_device(queue), queue);
+   /* Only allocation errors are retryable here. Keep the existing lost-device
+    * behavior for other failures; device-creation errors such as NOT_PERMITTED
+    * and INITIALIZATION_FAILED are not valid QueueSubmit return values.
+    */
+   if (result != VK_SUCCESS && result != VK_ERROR_OUT_OF_HOST_MEMORY &&
+       result != VK_ERROR_OUT_OF_DEVICE_MEMORY)
+      result = vk_queue_set_lost(&queue->vk, "Kernel queue admission failed");
+   simple_mtx_unlock(&queue->vk.lock);
+   return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL
+hk_QueueSubmit2(VkQueue _queue, uint32_t submitCount,
+                const VkSubmitInfo2 *pSubmits, VkFence fence)
+{
+   VK_FROM_HANDLE(vk_queue, vk_queue, _queue);
+   struct hk_queue *queue = container_of(vk_queue, struct hk_queue, vk);
+   struct hk_device *dev = hk_queue_device(queue);
+
+   if (agx_chip_g17_m5(dev->dev.chip)) {
+      if (vk_device_is_lost(&dev->vk))
+         return VK_ERROR_DEVICE_LOST;
+
+      bool needs_queue = false;
+      for (uint32_t i = 0; i < submitCount && !needs_queue; i++) {
+         for (uint32_t j = 0; j < pSubmits[i].commandBufferInfoCount; j++) {
+            VK_FROM_HANDLE(hk_cmd_buffer, cmd,
+                           pSubmits[i].pCommandBufferInfos[j].commandBuffer);
+            if (!list_is_empty(&cmd->control_streams)) {
+               needs_queue = true;
+               break;
+            }
+         }
+      }
+      if (needs_queue) {
+         VkResult result = hk_queue_admit(queue);
+         if (result != VK_SUCCESS)
+            return result;
+      }
+   }
+
+   return vk_common_QueueSubmit2(_queue, submitCount, pSubmits, fence);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL
+hk_QueueBindSparse(VkQueue _queue, uint32_t bindInfoCount,
+                   const VkBindSparseInfo *pBindInfo, VkFence fence)
+{
+   VK_FROM_HANDLE(vk_queue, vk_queue, _queue);
+   struct hk_queue *queue = container_of(vk_queue, struct hk_queue, vk);
+   struct hk_device *dev = hk_queue_device(queue);
+
+   if (agx_chip_g17_m5(dev->dev.chip)) {
+      if (vk_device_is_lost(&dev->vk))
+         return VK_ERROR_DEVICE_LOST;
+
+      /* Sparse image changes may require a GPU maintenance command. Reserve
+       * its queue before any bind or semaphore operation in this API call.
+       */
+      for (uint32_t i = 0; i < bindInfoCount; i++) {
+         if (pBindInfo[i].imageOpaqueBindCount || pBindInfo[i].imageBindCount) {
+            VkResult result = hk_queue_admit(queue);
+            if (result != VK_SUCCESS)
+               return result;
+            break;
+         }
+      }
+   }
+
+   return vk_common_QueueBindSparse(_queue, bindInfoCount, pBindInfo, fence);
 }
 
 static VkResult
