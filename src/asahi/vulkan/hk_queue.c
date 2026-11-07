@@ -1925,11 +1925,33 @@ hk_device_quiesce_lost_submissions(struct hk_device *dev)
        !vk_device_is_lost_no_report(&dev->vk))
       return;
 
-   /* GPU storage remains pinned separately. This only protects the recording
-    * and pool metadata used before the driver takes those submission pins.
+   /* GPU storage remains pinned separately. This protects host object data
+    * and sync implementations referenced by deferred/threaded submissions.
     */
    vk_foreach_queue(queue, &dev->vk)
       vk_queue_wait_lost_submissions(queue);
+}
+
+/* A pending host submission also retains raw semaphore/fence sync pointers.
+ * Join or cancel that host work before freeing the sync implementation. */
+VKAPI_ATTR void VKAPI_CALL
+hk_DestroySemaphore(VkDevice _device, VkSemaphore semaphore,
+                    const VkAllocationCallbacks *pAllocator)
+{
+   VK_FROM_HANDLE(hk_device, dev, _device);
+   if (semaphore != VK_NULL_HANDLE)
+      hk_device_quiesce_lost_submissions(dev);
+   vk_common_DestroySemaphore(_device, semaphore, pAllocator);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+hk_DestroyFence(VkDevice _device, VkFence fence,
+                const VkAllocationCallbacks *pAllocator)
+{
+   VK_FROM_HANDLE(hk_device, dev, _device);
+   if (fence != VK_NULL_HANDLE)
+      hk_device_quiesce_lost_submissions(dev);
+   vk_common_DestroyFence(_device, fence, pAllocator);
 }
 
 static enum drm_asahi_priority

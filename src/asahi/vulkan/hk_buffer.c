@@ -12,6 +12,7 @@
 #include "agx_bo.h"
 #include "agx_device.h"
 #include "hk_device.h"
+#include "hk_queue.h"
 #include "hk_device_memory.h"
 #include "hk_entrypoints.h"
 #include "hk_physical_device.h"
@@ -355,6 +356,8 @@ hk_DestroyBuffer(VkDevice device, VkBuffer _buffer,
 
    if (!buffer)
       return;
+
+   hk_device_quiesce_lost_submissions(dev);
 
    if (buffer->sparse_map)
       hk_update_physical_sparse_map(dev, buffer->va->addr,
