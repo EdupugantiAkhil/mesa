@@ -40,6 +40,7 @@
 #include "hk_image_view.h"
 #include "hk_physical_device.h"
 #include "hk_shader.h"
+#include "hk_queue.h"
 #include "libagx_shaders.h"
 
 #include "util/cache_ops.h"
@@ -304,6 +305,7 @@ hk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
       container_of(vk_cmd_buffer, struct hk_cmd_buffer, vk);
    struct hk_cmd_pool *pool = hk_cmd_buffer_pool(cmd);
 
+   hk_device_quiesce_lost_submissions(hk_cmd_pool_device(pool));
    hk_free_resettable_cmd_buffer(cmd);
    util_dynarray_fini(&cmd->large_bos);
    free(cmd->retained_set);
@@ -367,6 +369,7 @@ hk_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer,
    struct hk_cmd_buffer *cmd =
       container_of(vk_cmd_buffer, struct hk_cmd_buffer, vk);
 
+   hk_device_quiesce_lost_submissions(hk_cmd_pool_device(hk_cmd_buffer_pool(cmd)));
    vk_command_buffer_reset(&cmd->vk);
    hk_free_resettable_cmd_buffer(cmd);
 

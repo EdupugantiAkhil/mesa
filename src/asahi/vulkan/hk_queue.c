@@ -1809,7 +1809,7 @@ hk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
    struct hk_queue *queue = container_of(vk_queue, struct hk_queue, vk);
    struct hk_device *dev = hk_queue_device(queue);
 
-   if (vk_queue_is_lost(&queue->vk))
+   if (vk_device_is_lost_no_report(&dev->vk))
       return VK_ERROR_DEVICE_LOST;
 
    VkResult result = queue_submit(dev, queue, submit);
@@ -1832,6 +1832,20 @@ hk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
    }
 
    return result;
+}
+
+void
+hk_device_quiesce_lost_submissions(struct hk_device *dev)
+{
+   if (!agx_chip_g17_m5(dev->dev.chip) ||
+       !vk_device_is_lost_no_report(&dev->vk))
+      return;
+
+   /* GPU storage remains pinned separately. This only protects the recording
+    * and pool metadata used before the driver takes those submission pins.
+    */
+   vk_foreach_queue(queue, &dev->vk)
+      vk_queue_wait_lost_submissions(queue);
 }
 
 static enum drm_asahi_priority
